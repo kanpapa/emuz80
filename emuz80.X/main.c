@@ -5,6 +5,8 @@
   Target: EMUZ80 - The computer with only Z80 and PIC18F47Q43
   Compiler: MPLAB XC8 v2.36
   Written by Tetsuya Suzuki
+
+  for COSMAC CDP1802 by kanpapa
 */
 
 // CONFIG1
@@ -120,7 +122,7 @@ void __interrupt(irq(CLC1),base(8)) CLC_ISR(){
     CLC1IF = 0; // Clear interrupt flag
     
     //address.h = PORTD; // Read address high
-    address.h = 0; // Read address high
+    address.h = 0; // Read address high (256byte only)
     address.l = PORTB; // Read address low
     
     if(!RA5) { // COSMAC memory read cycle (MRD active)
@@ -136,30 +138,30 @@ void __interrupt(irq(CLC1),base(8)) CLC_ISR(){
         } else { // Out of memory
             LATC = 0xff; // Invalid data
         }
-    } else { // Z80 memory write cycle (MWR active)
+    } else { // COSMAC memory write cycle (MRD inactive)
         //if(RE0) while(RE0);
-        //if((address.w >= RAM_TOP) && (address.w < (RAM_TOP + RAM_SIZE))){ // RAM area
-        //    ram[address.w - RAM_TOP] = PORTC; // Write into RAM
-        //} else if(address.w == UART_DREG) { // UART data register
-        //    U3TXB = PORTC; // Write into U3 TX buffer
+            if((address.w >= RAM_TOP) && (address.w < (RAM_TOP + RAM_SIZE))){ // RAM area
+                ram[address.w - RAM_TOP] = PORTC; // Write into RAM
+                //} else if(address.w == UART_DREG) { // UART data register
+                //    U3TXB = PORTC; // Write into U3 TX buffer
+            }
         //}
     }
     dff_reset(); // WAIT inactive
 }
 
-//  Called at Z80 MREQ rising edge
+//  Called at COSMAC TPB rising edge
 void __interrupt(irq(INT0),base(8)) INT0_ISR(){
     INT0IF = 0; // Clear interrupt flag
     db_setin(); // Set data bus as input
 }
-
 
 // main routine
 void main(void) {
     // System initialize
     OSCFRQ = 0x08; // 64MHz internal OSC
 
-    // Address bus A15-A8 pin (RD0-RD7)
+    // Address bus A15-A8 pin (RD0-RD7) --- Unused
     ANSELD = 0x00; // Disable analog function
     WPUD = 0xff; // Week pull up
     TRISD = 0xff; // Set as input
@@ -184,12 +186,12 @@ void main(void) {
     LATE1 = 0; // Reset
     TRISE1 = 0; // Set as output
 
-    // INT output pin (RE2))
+    // INT output pin (RE2)) --- Unused
     ANSELE2 = 0; // Disable analog function
     LATE2 = 1; // No interrupt request
     TRISE2 = 0; // Set as output
 
-    // IOREQ(RA0) input pin
+    // N0(RA0) input pin --- Unused
     ANSELA0 = 0; // Disable analog function
     WPUA0 = 1; // Week pull up
     TRISA0 = 1; // Set as input
@@ -241,7 +243,7 @@ void main(void) {
     TRISA2 = 1; // Set as input
     CLCIN1PPS = 0x2; //RA2->CLC1:CLCIN1;
 
-    // WAIT(RA4) CLC output pin
+    // WAIT(RA4) CLC output pin --- Unused
     ANSELA4 = 0; // Disable analog function
     LATA4 = 1; // Default level
     TRISA4 = 0; // Set as output
@@ -252,14 +254,14 @@ void main(void) {
     CLCnPOL = 0x82; // LCG2POL inverted, LCPOL inverted
 
     // CLC data inputs select
-    CLCnSEL0 = 0; // D-FF CLK assign CLCIN0PPS(RA0)
+    CLCnSEL0 = 0; // D-FF CLK assign CLCIN0PPS(RA1)
     CLCnSEL1 = 1; // D-FF D assign CLCIN1PPS(RA2) 
     CLCnSEL2 = 127; //127; // D-FF S assign none
     CLCnSEL3 = 127; // D-FF R assign none
 
     // CLCn gates logic select
-    CLCnGLS0 = 0x1; // Connect LCG1D1N 
-    CLCnGLS1 = 0x4; // Connect LCG2D2N
+    CLCnGLS0 = 0x1; // 0x1 Connect LCG1D1N 
+    CLCnGLS1 = 0x4; // 0x4 Connect LCG2D2N
     CLCnGLS2 = 0x0; // Connect none
     CLCnGLS3 = 0x0; // Connect none
 
@@ -297,15 +299,34 @@ void main(void) {
     while(1); // All things come to those who wait
 }
 
-// tiny program
-//00              7B               1?Q
-//01              7A               0?Q
-//02              30 00            00?R(P).0
-        
+// blink program 1
+//00  7B               1->Q
+//01  7A               0->Q
+//02  30 00            00->R(P).0
+
+// Counter program 2
+//0000 F8 81             8 (   2) START   LDI     #IOR    ;D <- #IOR
+//0002 A3                9 (   2)         PLO     3       ;R(3).0 <- D
+//0003 E3               10 (   2)         SEX     3       ;X <- 3
+//0004 84               11 (   2) LOOP1   GLO     4       ;D <- R(4).1
+//0005 53               12 (   2)         STR     3       ;M(R(3)) <- D
+//0006 61               13 (   2)         OUT     1       ;BUS <- M(R(3)); R(3)++
+//0007 23               14 (   2)         DEC     3       ;R(3)--
+//0008 14               15 (   2)         INC     4       ;R(4)++
+//0009 30 04            16 (   2)         BR      LOOP1   ;Branch to LOOP1
+//000B                  17        *
+//0081 00               18        IOR     .DB     0       ;IO Register
+
+
 const unsigned char rom[ROM_SIZE] = {
     // OSC ($0000-$007F)
-	0x7b, 0x7a, 0x30, 0x00, 0xff, 0xff, 0xff, 0xff, // 0000
-	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+
+	// Program 1: Blink
+    //0x7b, 0x7a, 0x30, 0x00, 0xff, 0xff, 0xff, 0xff, // 0000
+
+    // Program 2: Counter
+    0xf8, 0x81, 0xa3, 0xe3, 0x84, 0x53, 0x61, 0x23, // 0000
+	0x14, 0x30, 0x04, 0xff, 0xff, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0010
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0020
