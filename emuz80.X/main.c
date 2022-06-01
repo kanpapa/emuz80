@@ -73,14 +73,15 @@
 
 // CDP1802
 //#define Z80_CLK 1800000UL // CDP1802 clock frequency(1.8MHz)
-#define Z80_CLK 180000UL // CDP1802 clock frequency(0.18MHz) slowdown
+#define Z80_CLK 18000UL // CDP1802 clock frequency(0.18MHz) slowdown
 
 //#define ROM_SIZE 0x80 // ROM size 128 bytes
 //#define RAM_SIZE 0x80 // RAM size 128 bytes
 //#define RAM_TOP 0x80 // RAM start address
-#define ROM_SIZE 0x0020 // ROM size 256 bytes
+#define ROM_SIZE 0x0030 // ROM size 256 bytes
 #define RAM_SIZE 0x0080 // RAM size 256 bytes
 #define RAM_TOP 0x8000 // RAM start address
+//#define RAM_TOP 0x8C00 // RAM start address
 //#define RAM_TOP 0x0080 // RAM start address
 
 #define UART_DREG 0xE000 // UART data register address
@@ -113,12 +114,71 @@ char getch(void) {
 }
 */
 
-#define dff_reset() {G3POL = 1; G3POL = 0;}
+//#define dff_reset() {G3POL = 1; G3POL = 0;}
 #define db_setin() (TRISC = 0xff)
 #define db_setout() (TRISC = 0x00)
 
 // Never called, logically
 void __interrupt(irq(default),base(8)) Default_ISR(){}
+
+/**
+   IOCAF1 Interrupt Service Routine TPB(RA1) Rising edge
+ */
+// Called at COSMAC TPB(RA1) Rising edge
+void IOCAF1_ISR(void) {
+    IOCAFbits.IOCAF1 = 0;
+    //address.h = 0; // Read address high (256byte only)
+    address.l = PORTB; // Read address low
+    
+    if(!RA5) { // COSMAC memory read cycle (MRD active)
+        db_setout(); // Set data bus as output  PIC????????????????
+        if(address.w < ROM_SIZE){ // ROM area
+            LATC = rom[address.w]; // Out ROM data
+        } else if((address.w >= RAM_TOP) && (address.w < (RAM_TOP + RAM_SIZE))){ // RAM area
+            LATC = ram[address.w - RAM_TOP]; // RAM data
+        //} else if(address.w == UART_CREG){ // UART control register
+        //    LATC = PIR9; // U3 flag
+        //} else if(address.w == UART_DREG){ // UART data register
+        //    LATC = U3RXB; // U3 RX buffer
+        } else { // Out of memory
+            LATC = 0xff; // Invalid data
+        }
+    } else { // COSMAC memory write cycle (MWR active)
+        //if(RE0) while(RE0);
+        if(!RE0) {
+            if((address.w >= RAM_TOP) && (address.w < (RAM_TOP + RAM_SIZE))){ // RAM area
+                ram[address.w - RAM_TOP] = PORTC; // Write into RAM
+            //} else if(address.w == UART_DREG) { // UART data register
+            //    U3TXB = PORTC; // Write into U3 TX buffer
+            }
+        }
+    }
+}
+
+/**
+   IOCAF2 Interrupt Service Routine
+*/
+// Called at COSMAC TPA(RA2) Falling edge
+void IOCAF2_ISR(void) {
+    IOCAFbits.IOCAF2 = 0;
+    address.h = PORTB;  // Read address high
+}
+
+void __interrupt(irq(IOC),base(8)) PIN_MANAGER_IOC()
+{   
+	// interrupt on change for pin IOCAF1
+    if(IOCAFbits.IOCAF1 == 1)
+    {
+        IOCAF1_ISR();  
+    }	
+	// interrupt on change for pin IOCAF2
+    if(IOCAFbits.IOCAF2 == 1)
+    {
+        IOCAF2_ISR();  
+    }	
+}
+
+#ifdef false
 
 // Called at COSMAC TPB falling edge (PIC18F47Q43 issues WAIT)
 void __interrupt(irq(CLC1),base(8)) CLC1_ISR(){
@@ -158,10 +218,12 @@ void __interrupt(irq(CLC2),base(8)) CLC2_ISR()
     address.h = PORTB;  // Read address high
 }
 
-//  Called at COSMAC TPB rising edge
+#endif
+
+//  Called at COSMAC TPB(RA1) Falling edge
 void __interrupt(irq(INT0),base(8)) INT0_ISR(){
     INT0IF = 0; // Clear interrupt flag
-    db_setin(); // Set data bus as input
+    db_setin(); // Set data bus as input??PIC????????????????
 }
 
 // main routine
@@ -239,26 +301,27 @@ void main(void) {
     ANSELA1 = 0; // Disable analog function
     WPUA1 = 1; // Week pull up
     TRISA1 = 1; // Set as input
-    CLCIN0PPS = 0x1; //RA1->CLC1:CLCIN0;
+    //CLCIN0PPS = 0x1; //RA1->CLC1:CLCIN0;
 
     // TPA(RA2) CLC2 input pin --- FF-D
     ANSELA2 = 0; // Disable analog function
     WPUA2 = 1; // Week pull up
     TRISA2 = 1; // Set as input
-    CLCIN1PPS = 0x2; //RA2->CLC1:CLCIN1;
+    //CLCIN1PPS = 0x2; //RA2->CLC1:CLCIN1;
 
     // RA4 CLC1 output pin --- debug
     ANSELA4 = 0; // Disable analog function
     LATA4 = 1; // Default level
     TRISA4 = 0; // Set as output
-    RA4PPS = 0x01;  //RA4->CLC1:CLC1;
+    //RA4PPS = 0x01;  //RA4->CLC1:CLC1;
 
     // RA0 CLC2 output pin --- debug   
     ANSELA0 = 0; // Disable analog function
-    WPUA0 = 1; // Week pull up
-    TRISA0 = 0; // Set as input
-    RA0PPS = 0x02;  //RA0->CLC2:CLC2;
+    LATA0 = 1; // Default level
+    TRISA0 = 0; // Set as output
+    //RA0PPS = 0x02;  //RA0->CLC2:CLC2;
   
+#ifdef false
     //CLC1 configuration
     CLCSELECT = 0x0; // CLC1 instance  
     CLCnPOL = 0x82; // LCG2POL inverted, LCPOL inverted
@@ -277,6 +340,8 @@ void main(void) {
 
     CLCDATA = 0x0; // Clear all CLC outs
     CLCnCON = 0x8c; // Select D-FF, falling edge inturrupt
+#endif
+
     
     // INTERRUPT_Initialize
     //
@@ -295,6 +360,30 @@ void main(void) {
     IVTLOCK = 0xAA;
     IVTLOCKbits.IVTLOCKED = 0x01; // Lock IVT
 
+    // Assign peripheral interrupt priority vectors
+    IPR0bits.IOCIP = 1;
+
+    /**
+    IOCx registers 
+    */
+    //interrupt on change for group IOCAF - flag
+    IOCAFbits.IOCAF1 = 0;
+    //interrupt on change for group IOCAF - flag
+    IOCAFbits.IOCAF2 = 0;
+    //interrupt on change for group IOCAN - negative
+    IOCANbits.IOCAN1 = 0;
+    //interrupt on change for group IOCAN - negative    TPA???????????????????????????????
+    IOCANbits.IOCAN2 = 1;
+    //interrupt on change for group IOCAP - positive
+    IOCAPbits.IOCAP1 = 1;
+    //interrupt on change for group IOCAP - positive??TPB??????????????PIC??????????
+    IOCAPbits.IOCAP2 = 0;
+ 
+    // Enable IOCI interrupt 
+    PIE0bits.IOCIE = 1; 
+
+
+#ifdef false
     // CLC VI enable
     CLC1IF = 0; // Clear the CLC interrupt flag
     CLC1IE = 1; // Enabling CLC1 interrupt
@@ -321,11 +410,14 @@ void main(void) {
     CLC2IF = 0; // Clear the CLC interrupt flag
     CLC2IE = 1; // Enabling CLC2 interrupt.
 
-    // INT0 VI enable
-    INT0PPS = 0x1; //RA1->INTERRUPT MANAGER:INT0;
-    INT0EDG = 1; // Rising edge
-    INT0IE = 1;
+#endif
 
+    // INT0 VI enable
+    // TPB(RA1)???????????????PIC??????????
+    INT0PPS = 0x1; //RA1->INTERRUPT MANAGER:INT0;
+    INT0EDG = 0; // 0: Falling edge // 1: Rising edge
+    INT0IE = 1;
+   
     // COSMAC start
     GIE = 1; // Global interrupt enable
     LATE1 = 1; // Release reset
@@ -349,10 +441,10 @@ void main(void) {
 //0008 14               15 (   2)         INC     4       ;R(4)++
 //0009 30 04            16 (   2)         BR      LOOP1   ;Branch to LOOP1
 
-// Counter program 3  (High RAM $8007 R/W)
+// Counter program 3  (High RAM $8008 R/W)
 //0000 F8 80             8 (   2) START   LDI     /RAM    ;D <- $80  $8007
 //0002 B3                9 (   2)         PHI     3       ;R(3).1 <- D
-//0003 F8 07            10 (   2)         LDI     #RAM    ;D <- $07
+//0003 F8 08            10 (   2)         LDI     #RAM    ;D <- $07
 //0005 A3               11 (   2)         PLO     3       ;R(3).0 <- D
 //0006 E3               13 (   2)         SEX     3       ;X <- 3
 //0007 84               14 (   2) LOOP1   GLO     4       ;D <- R(4).0
@@ -362,23 +454,88 @@ void main(void) {
 //000B 14               18 (   2)         INC     4       ;R(4)++
 //000C 30 07            19 (   2)         BR      LOOP1   ;Branch to LOOP1
 
+// memory move program 4
+// $0000??$0030??????$8000??$0030???????????????OUT???
+//0000-                  7        SOURCE  .EQ     $0000
+//0080-                  8        DESTIN  .EQ     $8000
+//0070-                  9        MAXADD  .EQ     $0030
+//00F0-                 10        MAXDUMP .EQ     $8030
+//0000-                 13        PROGPC  .EQ     0
+//
+//0000-F8 00            33 (   2) START:  LDI     /BEG
+//0002-B9               34 (   2)         PHI     R9
+//0003-F8 07            35 (   2)         LDI     #BEG
+//0005-A9               36 (   2)         PLO     R9
+//0006-D9               37 (   2)         SEP     R9
+//0007-                 38
+//0007-F8 00            39 (   2) BEG:    LDI     /SOURCE
+//0009-BA               40 (   2)         PHI     RA
+//000A-F8 00            41 (   2)         LDI     #SOURCE
+//000C-AA               42 (   2)         PLO     RA
+//000D-                 43
+//000D-F8 80            44 (   2)         LDI     /DESTIN
+//000F-BB               45 (   2)         PHI     RB
+//0010-F8 00            46 (   2)         LDI     #DESTIN
+//0012-AB               47 (   2)         PLO     RB
+//0013-                 48
+//0013-4A               49 (   2) REPEAT: LDA     RA
+//0014-5B               50 (   2)         STR     RB
+//0015-1B               51 (   2)         INC     RB
+//0016-8A               52 (   2)         GLO     RA
+//0017-FB 31            53 (   2)         XRI     #MAXADD+1
+//0019-3A 13            54 (   2)         BNZ     REPEAT
+//001B-                 55
+//001B-F8 80            56 (   2) DUMP:   LDI     /DESTIN
+//001D-BB               57 (   2)         PHI     RB
+//001E-F8 00            58 (   2)         LDI     #DESTIN
+//0020-AB               59 (   2)         PLO     RB
+//0021-EB               60 (   2)         SEX     RB
+//0022-61               61 (   2) REPEAT2: OUT    1
+//0023-8B               62 (   2)         GLO     RB
+//0024-FB 31            63 (   2)         XRI     #MAXDUMP+1
+//0026-3A 22            64 (   2)         BNZ     REPEAT2
+//0028-                 65
+//0028-                 66
+//0028-30 28            67 (   2) ENDLOOP: BR ENDLOOP
+
 const unsigned char rom[ROM_SIZE] = {
-	// Program 1: Blink
-    //0x7b, 0x7a, 0x30, 0x00, 0xff, 0xff, 0xff, 0xff, // 0000
+#ifdef false
+    // Program 1: Blink
+    0x7b, 0x7a, 0x30, 0x00, 0xff, 0xff, 0xff, 0xff, // 0000
 
     // Program 2: Counter2 (Low RAM $0081 R/W)
-    //0xf8, 0x81, 0xa3, 0xe3, 0x84, 0x53, 0x61, 0x23, // 0000
-	//0x14, 0x30, 0x04, 0xff, 0xff, 0xff, 0xff, 0xff,
-    //0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    //0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-            
-    // Program 3: Counter3 (High RAM $8007 R/W)
-    0xf8, 0x80, 0xb3, 0xf8, 0x07, 0xa3, 0xe3, 0x84, // 0000
-    0x53, 0x61, 0x23, 0x14, 0x30, 0x07, 0xff, 0xff,
+    0xf8, 0x81, 0xa3, 0xe3, 0x84, 0x53, 0x61, 0x23, // 0000
+    0x14, 0x30, 0x04, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0010
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+            
+    // Program 3: Counter3 (High RAM $8008 R/W)
+    0xf8, 0x80, 0xb3, 0xf8, 0x08, 0xa3, 0xe3, 0x84, // 0000
+    0x53, 0x61, 0x23, 0x14, 0x30, 0x07, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0010
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0020
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+
+#endif
         
-#ifdef false
+    // Program 4: memory move and dump $0000 -> $8000 $30byte
+    0xF8, 0x00, 0xB9, 0xF8, 0x07, 0xA9, 0xD9, 0xF8, // 0000
+    0x00, 0xBA, 0xF8, 0x00, 0xAA, 0xF8, 0x80, 0xBB,
+    0xF8, 0x00, 0xAB, 0x4A, 0x5B, 0x1B, 0x8A, 0xFB, // 0010
+    0x31, 0x3A, 0x13, 0xF8, 0x80, 0xBB, 0xF8, 0x00,
+    0xAB, 0xEB, 0x61, 0x8B, 0xFB, 0x31, 0x3A, 0x22, // 0020
+    0x30, 0x28, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+
+#ifdef false            
+    // Program 5: Save register (Save area $8000-$801F)
+    0xF8, 0x00, 0xB0, 0xF8, 0x80, 0xB1, 0xF8, 0x1E, // 0000
+    0xA1, 0xF8, 0xA0, 0xB4, 0xE1, 0xF8, 0xD0, 0x51,
+    0xF3, 0x3A, 0x28, 0x21, 0x94, 0xFC, 0x70, 0x33, // 0010
+    0x1B, 0xFC, 0x21, 0xFC, 0x7F, 0xB4, 0x51, 0xF3,
+    0x3A, 0x28, 0xD1, 0x51, 0x21, 0x21, 0x30, 0x0D, // 0020
+    0x30, 0x28, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+
     // Program x: UT4 (0000-01FE)
     0xC4,0xF8,0x00,0xB0,0xF8,0x8C,0xB1,0xF8,0x1E,0xA1,0xF8,0xA0,0xB4,0xE1,0xF8,0xD0,
     0x51,0xF3,0x3A,0x29,0x21,0x94,0xFC,0x70,0x33,0x1C,0xFC,0x21,0xFC,0x7F,0xB4,0x51,
@@ -413,5 +570,4 @@ const unsigned char rom[ROM_SIZE] = {
     0xFF,0x1B,0x32,0x9F,0x3B,0xEA,0xF8,0x00,0x30,0xF5,0x9F,0xFA,0x0F,0xFC,0xF6,0x3B,
     0xF3,0xFC,0x07,0xFF,0xC6,0xAE,0x30,0xC2,0xD3,0x0A,0xD3,0x3F,0xC0,0x00,0x39,0xff
 #endif
-
 };
